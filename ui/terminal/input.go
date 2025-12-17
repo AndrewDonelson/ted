@@ -88,6 +88,10 @@ func processKeyEvent(ev *tcell.EventKey) *KeyEvent {
 		return &KeyEvent{Action: KeyActionEnd, Key: key, Modifiers: modifiers}
 	case tcell.KeyRune:
 		// Regular character input
+		// Ignore Alt+key combinations (they're used for menus in Phase 1+)
+		if modifiers&tcell.ModAlt != 0 {
+			return &KeyEvent{Action: KeyActionNone, Key: key, Modifiers: modifiers}
+		}
 		if r != 0 {
 			return &KeyEvent{Action: KeyActionCharacter, Character: r, Key: key, Modifiers: modifiers}
 		}

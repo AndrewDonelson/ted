@@ -97,6 +97,7 @@ func (e *Editor) OpenFile(path string) error {
 	}
 
 	e.buffer.SetLines(lines)
+	e.buffer.MarkSaved() // File is loaded, not modified
 	e.filePath = path
 	e.fileInfo = fileInfo
 	e.lineEnding = fileInfo.LineEnding
@@ -110,6 +111,7 @@ func (e *Editor) SetFilePath(path string) {
 	e.filePath = path
 	e.fileInfo = nil                 // No file info for new files
 	e.lineEnding = file.LineEndingLF // Default to LF for new files
+	e.buffer.MarkSaved()             // New file starts as "saved" (empty)
 	e.isDirty = false
 }
 
@@ -124,8 +126,38 @@ func (e *Editor) SaveFile() error {
 		return fmt.Errorf("write file: %w", err)
 	}
 
+	// Mark buffer as saved
 	e.buffer.MarkSaved()
 	e.isDirty = false
+
+	// Update file info after save
+	if e.fileInfo != nil {
+		// Update size
+		var totalSize int64
+		for _, line := range lines {
+			totalSize += int64(len(line))
+		}
+		// Add line ending sizes
+		lineEndingSize := int64(len(string(e.lineEnding)))
+		if len(lines) > 0 {
+			totalSize += lineEndingSize * int64(len(lines)-1)
+		}
+		e.fileInfo.Size = totalSize
+	} else {
+		// Create file info for new files
+		var totalSize int64
+		for _, line := range lines {
+			totalSize += int64(len(line))
+		}
+		lineEndingSize := int64(len(string(e.lineEnding)))
+		if len(lines) > 0 {
+			totalSize += lineEndingSize * int64(len(lines)-1)
+		}
+		e.fileInfo = &file.FileInfo{
+			Size:       totalSize,
+			LineEnding: e.lineEnding,
+		}
+	}
 
 	return nil
 }
@@ -172,9 +204,11 @@ func (e *Editor) Run() error {
 			return fmt.Errorf("handle key event: %w", err)
 		}
 
-		// Render after handling event
-		if err := e.render(); err != nil {
-			return fmt.Errorf("render: %w", err)
+		// Render after handling event (unless it was a no-op)
+		if keyEvent.Action != terminal.KeyActionNone {
+			if err := e.render(); err != nil {
+				return fmt.Errorf("render: %w", err)
+			}
 		}
 	}
 
@@ -228,7 +262,7 @@ func (e *Editor) insertCharacter(r rune) {
 		// Ignore insertion errors for now
 		return
 	}
-	e.isDirty = true
+	// Buffer's modified flag is set by Insert(), no need to set isDirty
 }
 
 // handleBackspace handles the backspace key.
@@ -241,7 +275,7 @@ func (e *Editor) handleBackspace() {
 			return
 		}
 		e.buffer.MoveCursorLeft()
-		e.isDirty = true
+		// Buffer's modified flag is set by Delete()
 	} else if pos.Line > 0 {
 		// Join with previous line
 		prevLineLen := 0
@@ -254,7 +288,7 @@ func (e *Editor) handleBackspace() {
 			return
 		}
 		e.buffer.MoveCursor(start)
-		e.isDirty = true
+		// Buffer's modified flag is set by Delete()
 	}
 }
 
@@ -273,7 +307,7 @@ func (e *Editor) handleDelete() {
 		if err := e.buffer.Delete(start, end); err != nil {
 			return
 		}
-		e.isDirty = true
+		// Buffer's modified flag is set by Delete()
 	} else if pos.Line < e.buffer.LineCount()-1 {
 		// Join with next line
 		start := pos
@@ -281,7 +315,7 @@ func (e *Editor) handleDelete() {
 		if err := e.buffer.Delete(start, end); err != nil {
 			return
 		}
-		e.isDirty = true
+		// Buffer's modified flag is set by Delete()
 	}
 }
 
@@ -298,6 +332,9 @@ func (e *Editor) render() error {
 
 // buildFileInfo builds the file info for the info bar.
 func (e *Editor) buildFileInfo() *renderer.FileInfo {
+	// Use buffer's modified flag as source of truth
+	isModified := e.buffer.IsModified()
+
 	info := &renderer.FileInfo{
 		Name:       e.getFileName(),
 		Path:       e.filePath,
@@ -305,7 +342,7 @@ func (e *Editor) buildFileInfo() *renderer.FileInfo {
 		LineEnding: string(e.lineEnding),
 		TabSize:    4, // Default for Phase 0
 		TotalLines: e.buffer.LineCount(),
-		IsModified: e.isDirty,
+		IsModified: isModified,
 	}
 
 	if e.fileInfo != nil {

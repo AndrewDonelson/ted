@@ -13,13 +13,20 @@ func (r *Renderer) RenderMenuBar() error {
 	region := r.layout.GetMenuBarRegion()
 	style := GetMenuBarStyle()
 
+	// Fill entire menu bar region with background color first
+	for x := 0; x < region.Width; x++ {
+		r.screen.SetContent(region.X+x, region.Y, ' ', nil, style)
+	}
+
 	// Menu items
 	menuItems := "File  Edit  Search  View  Help"
 	menuX := 0
 
 	// Render menu items
 	for i, char := range menuItems {
-		r.screen.SetContent(menuX+i, region.Y, char, nil, style)
+		if menuX+i < region.Width {
+			r.screen.SetContent(menuX+i, region.Y, char, nil, style)
+		}
 	}
 
 	// Status indicators on the right
@@ -27,9 +34,11 @@ func (r *Renderer) RenderMenuBar() error {
 	statusX := region.Width - len(statusText)
 
 	// Render status (only if there's space)
-	if statusX > len(menuItems) {
+	if statusX > len(menuItems) && statusX >= 0 {
 		for i, char := range statusText {
-			r.screen.SetContent(statusX+i, region.Y, char, nil, style)
+			if statusX+i < region.Width {
+				r.screen.SetContent(statusX+i, region.Y, char, nil, style)
+			}
 		}
 	}
 
@@ -41,13 +50,20 @@ func (r *Renderer) RenderMenuBarWithStatus(mode string, encoding string, line, c
 	region := r.layout.GetMenuBarRegion()
 	style := GetMenuBarStyle()
 
+	// Fill entire menu bar region with background color first
+	for x := 0; x < region.Width; x++ {
+		r.screen.SetContent(region.X+x, region.Y, ' ', nil, style)
+	}
+
 	// Menu items
 	menuItems := "File  Edit  Search  View  Help"
 	menuX := 0
 
 	// Render menu items
 	for i, char := range menuItems {
-		r.screen.SetContent(menuX+i, region.Y, char, nil, style)
+		if menuX+i < region.Width {
+			r.screen.SetContent(menuX+i, region.Y, char, nil, style)
+		}
 	}
 
 	// Build status text
@@ -55,9 +71,11 @@ func (r *Renderer) RenderMenuBarWithStatus(mode string, encoding string, line, c
 	statusX := region.Width - len(statusText)
 
 	// Render status (only if there's space)
-	if statusX > len(menuItems) {
+	if statusX > len(menuItems) && statusX >= 0 {
 		for i, char := range statusText {
-			r.screen.SetContent(statusX+i, region.Y, char, nil, style)
+			if statusX+i < region.Width {
+				r.screen.SetContent(statusX+i, region.Y, char, nil, style)
+			}
 		}
 	}
 

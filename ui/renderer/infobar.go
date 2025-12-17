@@ -28,6 +28,11 @@ func (r *Renderer) RenderInfoBar(info *FileInfo) error {
 	region := r.layout.GetInfoBarRegion()
 	style := GetInfoBarStyle() // INVERTED style
 
+	// Fill entire info bar region with inverted background color first
+	for x := 0; x < region.Width; x++ {
+		r.screen.SetContent(region.X+x, region.Y, ' ', nil, style)
+	}
+
 	// Build info bar content
 	content := r.buildInfoBarContent(info, region.Width)
 
@@ -37,11 +42,6 @@ func (r *Renderer) RenderInfoBar(info *FileInfo) error {
 			break
 		}
 		r.screen.SetContent(region.X+i, region.Y, char, nil, style)
-	}
-
-	// Fill remaining space with background color
-	for i := len(content); i < region.Width; i++ {
-		r.screen.SetContent(region.X+i, region.Y, ' ', nil, style)
 	}
 
 	return nil

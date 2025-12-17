@@ -39,6 +39,11 @@ func (r *Renderer) Refresh() error {
 func (r *Renderer) RenderAll(buf *buffer.Buffer, cursorPos buffer.Position, fileInfo *FileInfo) error {
 	r.Clear()
 
+	// Fill entire screen with background color first
+	if err := r.fillScreen(); err != nil {
+		return err
+	}
+
 	// Render menu bar
 	if err := r.RenderMenuBar(); err != nil {
 		return err
@@ -62,6 +67,40 @@ func (r *Renderer) RenderAll(buf *buffer.Buffer, cursorPos buffer.Position, file
 	}
 
 	return r.Refresh()
+}
+
+// fillScreen fills the entire screen with the default background color.
+func (r *Renderer) fillScreen() error {
+	screenWidth, screenHeight := r.screen.GetSize()
+	defaultStyle := GetDefaultStyle()
+	menuBarStyle := GetMenuBarStyle()
+	infoBarStyle := GetInfoBarStyle()
+
+	menuBarRegion := r.layout.GetMenuBarRegion()
+	infoBarRegion := r.layout.GetInfoBarRegion()
+
+	for y := 0; y < screenHeight; y++ {
+		var style tcell.Style
+		if y < menuBarRegion.Y+menuBarRegion.Height {
+			// Menu bar area - use menu bar style
+			style = menuBarStyle
+		} else if y >= infoBarRegion.Y {
+			// Info bar area - use inverted info bar style
+			style = infoBarStyle
+		} else {
+			// Edit area - use default style
+			style = defaultStyle
+		}
+
+		// Fill entire width with appropriate background
+		for x := 0; x < screenWidth; x++ {
+			if err := r.screen.SetContent(x, y, ' ', nil, style); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // GetDefaultStyle returns the default text style.
