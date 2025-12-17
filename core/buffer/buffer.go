@@ -281,6 +281,45 @@ func (b *Buffer) GetAllLines() []string {
 	return lines
 }
 
+// GetText returns the text between start and end positions (inclusive start, exclusive end).
+// This is useful for recording what was deleted for undo operations.
+func (b *Buffer) GetText(start, end Position) (string, error) {
+	if err := b.validatePosition(start); err != nil {
+		return "", err
+	}
+	if err := b.validatePosition(end); err != nil {
+		return "", err
+	}
+
+	if start.Line > end.Line || (start.Line == end.Line && start.Col > end.Col) {
+		return "", fmt.Errorf("invalid range: start position after end position")
+	}
+
+	if start.Line == end.Line && start.Col == end.Col {
+		return "", nil // Empty range
+	}
+
+	if start.Line == end.Line {
+		// Single line
+		line := b.lines[start.Line]
+		return line[start.Col:end.Col], nil
+	}
+
+	// Multi-line
+	var result strings.Builder
+	// First line: from start.Col to end of line
+	result.WriteString(b.lines[start.Line][start.Col:])
+	result.WriteString("\n")
+	// Middle lines: full lines
+	for line := start.Line + 1; line < end.Line; line++ {
+		result.WriteString(b.lines[line])
+		result.WriteString("\n")
+	}
+	// Last line: from start to end.Col
+	result.WriteString(b.lines[end.Line][:end.Col])
+	return result.String(), nil
+}
+
 // validatePosition checks if a position is valid for the current buffer state.
 func (b *Buffer) validatePosition(pos Position) error {
 	if pos.Line < 0 || pos.Line >= len(b.lines) {

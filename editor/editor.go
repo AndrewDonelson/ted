@@ -8,7 +8,9 @@ import (
 	"fmt"
 
 	"github.com/AndrewDonelson/ted/core/buffer"
+	"github.com/AndrewDonelson/ted/core/clipboard"
 	"github.com/AndrewDonelson/ted/core/file"
+	"github.com/AndrewDonelson/ted/core/history"
 	"github.com/AndrewDonelson/ted/ui/layout"
 	"github.com/AndrewDonelson/ted/ui/menu"
 	"github.com/AndrewDonelson/ted/ui/renderer"
@@ -29,8 +31,9 @@ const (
 // Editor represents the main editor instance.
 type Editor struct {
 	// Core components
-	buffer *buffer.Buffer
-	file   *FileState
+	buffer  *buffer.Buffer
+	file    *FileState
+	history *history.History
 
 	// UI components
 	layout   *layout.Layout
@@ -44,6 +47,11 @@ type Editor struct {
 	filePath   string
 	fileInfo   *file.FileInfo
 	lineEnding file.LineEnding
+
+	// Selection state
+	selectionStart buffer.Position // Start of selection (anchor point)
+	selectionEnd   buffer.Position // End of selection (cursor position)
+	hasSelection   bool            // Whether there is an active selection
 }
 
 // FileState tracks file-related state.
@@ -76,16 +84,23 @@ func NewEditor() (*Editor, error) {
 	// Initialize buffer
 	buf := buffer.NewBuffer()
 
+	// Initialize history (undo/redo)
+	hist := history.NewHistory(100) // 100 operations deep
+
 	return &Editor{
-		buffer:     buf,
-		file:       &FileState{Encoding: "UTF-8"},
-		layout:     layout,
-		renderer:   renderer,
-		menuBar:    menuBar,
-		screen:     screen,
-		mode:       ModeInsert,
-		isDirty:    false,
-		lineEnding: file.LineEndingLF,
+		buffer:         buf,
+		file:           &FileState{Encoding: "UTF-8"},
+		history:        hist,
+		layout:         layout,
+		renderer:       renderer,
+		menuBar:        menuBar,
+		screen:         screen,
+		mode:           ModeInsert,
+		isDirty:        false,
+		lineEnding:     file.LineEndingLF,
+		hasSelection:   false,
+		selectionStart: buffer.Position{Line: 0, Col: 0},
+		selectionEnd:   buffer.Position{Line: 0, Col: 0},
 	}, nil
 }
 
@@ -102,6 +117,9 @@ func (e *Editor) OpenFile(path string) error {
 	e.fileInfo = fileInfo
 	e.lineEnding = fileInfo.LineEnding
 	e.isDirty = false
+
+	// Clear history when opening a new file
+	e.history.Clear()
 
 	return nil
 }
@@ -129,6 +147,10 @@ func (e *Editor) SaveFile() error {
 	// Mark buffer as saved
 	e.buffer.MarkSaved()
 	e.isDirty = false
+
+	// Clear redo stack on save (save is a checkpoint)
+	// Keep undo stack so user can still undo after save
+	e.history.ClearRedo()
 
 	// Update file info after save
 	if e.fileInfo != nil {
@@ -230,16 +252,37 @@ func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
 		// If no file path, silently ignore (Save As not implemented in Phase 0)
 	case terminal.KeyActionCharacter:
 		if ke.IsPrintable() {
+			e.clearSelection() // Clear selection when typing
 			e.insertCharacter(ke.Character)
 		}
 	case terminal.KeyActionMoveLeft:
+		e.clearSelection()
 		e.buffer.MoveCursorLeft()
 	case terminal.KeyActionMoveRight:
+		e.clearSelection()
 		e.buffer.MoveCursorRight()
 	case terminal.KeyActionMoveUp:
+		e.clearSelection()
 		e.buffer.MoveCursorUp()
 	case terminal.KeyActionMoveDown:
+		e.clearSelection()
 		e.buffer.MoveCursorDown()
+	case terminal.KeyActionSelectLeft:
+		e.startSelectionIfNeeded()
+		e.buffer.MoveCursorLeft()
+		e.updateSelectionEnd()
+	case terminal.KeyActionSelectRight:
+		e.startSelectionIfNeeded()
+		e.buffer.MoveCursorRight()
+		e.updateSelectionEnd()
+	case terminal.KeyActionSelectUp:
+		e.startSelectionIfNeeded()
+		e.buffer.MoveCursorUp()
+		e.updateSelectionEnd()
+	case terminal.KeyActionSelectDown:
+		e.startSelectionIfNeeded()
+		e.buffer.MoveCursorDown()
+		e.updateSelectionEnd()
 	case terminal.KeyActionBackspace:
 		e.handleBackspace()
 	case terminal.KeyActionDelete:
@@ -250,6 +293,28 @@ func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
 		e.buffer.MoveCursorToLineStart()
 	case terminal.KeyActionEnd:
 		e.buffer.MoveCursorToLineEnd()
+	case terminal.KeyActionUndo:
+		if err := e.Undo(); err != nil {
+			// Silently ignore if no undo available
+			return nil
+		}
+	case terminal.KeyActionRedo:
+		if err := e.Redo(); err != nil {
+			// Silently ignore if no redo available
+			return nil
+		}
+	case terminal.KeyActionCut:
+		if err := e.Cut(); err != nil {
+			return fmt.Errorf("cut: %w", err)
+		}
+	case terminal.KeyActionCopy:
+		if err := e.Copy(); err != nil {
+			return fmt.Errorf("copy: %w", err)
+		}
+	case terminal.KeyActionPaste:
+		if err := e.Paste(); err != nil {
+			return fmt.Errorf("paste: %w", err)
+		}
 	}
 
 	return nil
@@ -258,38 +323,75 @@ func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
 // insertCharacter inserts a character at the current cursor position.
 func (e *Editor) insertCharacter(r rune) {
 	pos := e.buffer.GetCursor()
-	if err := e.buffer.Insert(pos, string(r)); err != nil {
+	text := string(r)
+
+	// Record operation for undo
+	op := &history.InsertOperation{
+		Pos:  pos,
+		Text: text,
+	}
+
+	// Perform insertion
+	if err := e.buffer.Insert(pos, text); err != nil {
 		// Ignore insertion errors for now
 		return
 	}
-	// Buffer's modified flag is set by Insert(), no need to set isDirty
+
+	// Push to history
+	e.history.Push(op)
 }
 
 // handleBackspace handles the backspace key.
 func (e *Editor) handleBackspace() {
 	pos := e.buffer.GetCursor()
+	var start, end buffer.Position
+	var deletedText string
+
 	if pos.Col > 0 {
 		// Delete character before cursor
-		start := buffer.Position{Line: pos.Line, Col: pos.Col - 1}
-		if err := e.buffer.Delete(start, pos); err != nil {
-			return
-		}
-		e.buffer.MoveCursorLeft()
-		// Buffer's modified flag is set by Delete()
+		start = buffer.Position{Line: pos.Line, Col: pos.Col - 1}
+		end = pos
 	} else if pos.Line > 0 {
 		// Join with previous line
 		prevLineLen := 0
 		if line, err := e.buffer.GetLine(pos.Line - 1); err == nil {
 			prevLineLen = len(line)
 		}
-		start := buffer.Position{Line: pos.Line - 1, Col: prevLineLen}
-		end := buffer.Position{Line: pos.Line, Col: 0}
-		if err := e.buffer.Delete(start, end); err != nil {
-			return
-		}
-		e.buffer.MoveCursor(start)
-		// Buffer's modified flag is set by Delete()
+		start = buffer.Position{Line: pos.Line - 1, Col: prevLineLen}
+		end = buffer.Position{Line: pos.Line, Col: 0}
+	} else {
+		// At start of document, nothing to delete
+		return
 	}
+
+	// Get text that will be deleted for undo
+	var err error
+	deletedText, err = e.buffer.GetText(start, end)
+	if err != nil {
+		return
+	}
+
+	// Record operation for undo
+	op := &history.DeleteOperation{
+		StartPos: start,
+		EndPos:   end,
+		Deleted:  deletedText,
+	}
+
+	// Perform deletion
+	if err := e.buffer.Delete(start, end); err != nil {
+		return
+	}
+
+	// Update cursor position
+	if pos.Col > 0 {
+		e.buffer.MoveCursorLeft()
+	} else {
+		e.buffer.MoveCursor(start)
+	}
+
+	// Push to history
+	e.history.Push(op)
 }
 
 // handleDelete handles the delete key.
@@ -300,23 +402,211 @@ func (e *Editor) handleDelete() {
 		return
 	}
 
+	var start, end buffer.Position
+	var deletedText string
+
 	if pos.Col < len(line) {
 		// Delete character at cursor
-		start := pos
-		end := buffer.Position{Line: pos.Line, Col: pos.Col + 1}
-		if err := e.buffer.Delete(start, end); err != nil {
-			return
-		}
-		// Buffer's modified flag is set by Delete()
+		start = pos
+		end = buffer.Position{Line: pos.Line, Col: pos.Col + 1}
 	} else if pos.Line < e.buffer.LineCount()-1 {
 		// Join with next line
-		start := pos
-		end := buffer.Position{Line: pos.Line + 1, Col: 0}
-		if err := e.buffer.Delete(start, end); err != nil {
-			return
-		}
-		// Buffer's modified flag is set by Delete()
+		start = pos
+		end = buffer.Position{Line: pos.Line + 1, Col: 0}
+	} else {
+		// At end of document, nothing to delete
+		return
 	}
+
+	// Get text that will be deleted for undo
+	deletedText, err = e.buffer.GetText(start, end)
+	if err != nil {
+		return
+	}
+
+	// Record operation for undo
+	op := &history.DeleteOperation{
+		StartPos: start,
+		EndPos:   end,
+		Deleted:  deletedText,
+	}
+
+	// Perform deletion
+	if err := e.buffer.Delete(start, end); err != nil {
+		return
+	}
+
+	// Push to history
+	e.history.Push(op)
+}
+
+// Undo undoes the last operation.
+func (e *Editor) Undo() error {
+	return e.history.Undo(e.buffer)
+}
+
+// Redo redoes the last undone operation.
+func (e *Editor) Redo() error {
+	return e.history.Redo(e.buffer)
+}
+
+// Copy copies the selected text (or current line if no selection) to clipboard.
+func (e *Editor) Copy() error {
+	var text string
+	var err error
+
+	if e.hasSelection {
+		// Copy selected text
+		start, end := e.getSelectionRange()
+		text, err = e.buffer.GetText(start, end)
+		if err != nil {
+			return fmt.Errorf("get selected text: %w", err)
+		}
+	} else {
+		// Copy current line if no selection
+		pos := e.buffer.GetCursor()
+		text, err = e.buffer.GetLine(pos.Line)
+		if err != nil {
+			return fmt.Errorf("get line: %w", err)
+		}
+	}
+
+	// Copy to clipboard
+	if err := clipboard.Write(text); err != nil {
+		return fmt.Errorf("write clipboard: %w", err)
+	}
+
+	return nil
+}
+
+// Cut cuts the selected text (or current line if no selection) to clipboard.
+func (e *Editor) Cut() error {
+	var start, end buffer.Position
+	var deletedText string
+	var err error
+
+	if e.hasSelection {
+		// Cut selected text
+		start, end = e.getSelectionRange()
+		deletedText, err = e.buffer.GetText(start, end)
+		if err != nil {
+			return fmt.Errorf("get selected text: %w", err)
+		}
+	} else {
+		// Cut current line if no selection
+		pos := e.buffer.GetCursor()
+		line, err := e.buffer.GetLine(pos.Line)
+		if err != nil {
+			return fmt.Errorf("get line: %w", err)
+		}
+
+		start = buffer.Position{Line: pos.Line, Col: 0}
+		end = buffer.Position{Line: pos.Line + 1, Col: 0}
+		if pos.Line == e.buffer.LineCount()-1 {
+			// Last line - delete to end
+			end = buffer.Position{Line: pos.Line, Col: len(line)}
+		}
+
+		deletedText, err = e.buffer.GetText(start, end)
+		if err != nil {
+			return fmt.Errorf("get text: %w", err)
+		}
+	}
+
+	// Copy to clipboard
+	if err := clipboard.Write(deletedText); err != nil {
+		return fmt.Errorf("write clipboard: %w", err)
+	}
+
+	// Record operation for undo
+	op := &history.DeleteOperation{
+		StartPos: start,
+		EndPos:   end,
+		Deleted:  deletedText,
+	}
+
+	// Perform deletion
+	if err := e.buffer.Delete(start, end); err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+
+	// Clear selection
+	e.clearSelection()
+
+	// Adjust cursor
+	e.buffer.MoveCursor(start)
+
+	// Push to history
+	e.history.Push(op)
+
+	return nil
+}
+
+// Paste pastes text from clipboard at the current cursor position.
+func (e *Editor) Paste() error {
+	// Read from clipboard
+	text, err := clipboard.Read()
+	if err != nil {
+		return fmt.Errorf("read clipboard: %w", err)
+	}
+
+	if text == "" {
+		return nil // Nothing to paste
+	}
+
+	// Record operation for undo
+	pos := e.buffer.GetCursor()
+	op := &history.InsertOperation{
+		Pos:  pos,
+		Text: text,
+	}
+
+	// Insert text
+	if err := e.buffer.Insert(pos, text); err != nil {
+		return fmt.Errorf("insert: %w", err)
+	}
+
+	// Push to history
+	e.history.Push(op)
+
+	return nil
+}
+
+// clearSelection clears the current selection.
+func (e *Editor) clearSelection() {
+	e.hasSelection = false
+}
+
+// startSelectionIfNeeded starts a selection if one doesn't exist.
+func (e *Editor) startSelectionIfNeeded() {
+	if !e.hasSelection {
+		e.hasSelection = true
+		e.selectionStart = e.buffer.GetCursor()
+	}
+}
+
+// updateSelectionEnd updates the end of the selection to the current cursor position.
+func (e *Editor) updateSelectionEnd() {
+	if e.hasSelection {
+		e.selectionEnd = e.buffer.GetCursor()
+	}
+}
+
+// getSelectionRange returns the normalized selection range (start <= end).
+func (e *Editor) getSelectionRange() (start, end buffer.Position) {
+	if !e.hasSelection {
+		return buffer.Position{}, buffer.Position{}
+	}
+
+	start = e.selectionStart
+	end = e.selectionEnd
+
+	// Normalize: ensure start <= end
+	if start.Line > end.Line || (start.Line == end.Line && start.Col > end.Col) {
+		start, end = end, start
+	}
+
+	return start, end
 }
 
 // render renders all UI components.

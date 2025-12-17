@@ -2,7 +2,10 @@ module github.com/AndrewDonelson/ted
 
 go 1.25.5
 
-require github.com/gdamore/tcell/v2 v2.13.4
+require (
+	github.com/atotto/clipboard v0.1.4
+	github.com/gdamore/tcell/v2 v2.13.4
+)
 
 require (
 	github.com/gdamore/encoding v1.0.1 // indirect

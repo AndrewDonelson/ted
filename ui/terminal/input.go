@@ -35,6 +35,24 @@ const (
 	KeyActionHome
 	// KeyActionEnd represents End key.
 	KeyActionEnd
+	// KeyActionUndo represents Ctrl+Z (undo).
+	KeyActionUndo
+	// KeyActionRedo represents Ctrl+Y (redo).
+	KeyActionRedo
+	// KeyActionCut represents Ctrl+X (cut).
+	KeyActionCut
+	// KeyActionCopy represents Ctrl+C (copy).
+	KeyActionCopy
+	// KeyActionPaste represents Ctrl+V (paste).
+	KeyActionPaste
+	// KeyActionSelectLeft represents Shift+Left (extend selection left).
+	KeyActionSelectLeft
+	// KeyActionSelectRight represents Shift+Right (extend selection right).
+	KeyActionSelectRight
+	// KeyActionSelectUp represents Shift+Up (extend selection up).
+	KeyActionSelectUp
+	// KeyActionSelectDown represents Shift+Down (extend selection down).
+	KeyActionSelectDown
 )
 
 // KeyEvent represents a processed keyboard event.
@@ -68,6 +86,16 @@ func processKeyEvent(ev *tcell.EventKey) *KeyEvent {
 		return &KeyEvent{Action: KeyActionSave, Key: key, Modifiers: modifiers}
 	case tcell.KeyCtrlQ:
 		return &KeyEvent{Action: KeyActionQuit, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlZ:
+		return &KeyEvent{Action: KeyActionUndo, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlY:
+		return &KeyEvent{Action: KeyActionRedo, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlX:
+		return &KeyEvent{Action: KeyActionCut, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlC:
+		return &KeyEvent{Action: KeyActionCopy, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlV:
+		return &KeyEvent{Action: KeyActionPaste, Key: key, Modifiers: modifiers}
 	case tcell.KeyLeft:
 		return &KeyEvent{Action: KeyActionMoveLeft, Key: key, Modifiers: modifiers}
 	case tcell.KeyRight:
