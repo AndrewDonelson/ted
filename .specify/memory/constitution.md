@@ -61,6 +61,18 @@ Each phase must be complete and tested before moving to the next.
 - Use Conventional Commits format: `<type>(<scope>): <subject>`
 - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
 
+### Task Completion Criteria (MANDATORY)
+**A task or phase is NOT considered complete until:**
+- `make all` passes without errors or warnings
+- All code is properly formatted (`make fmt-check` passes)
+- All static analysis passes (`make vet` passes)
+- All tests pass (`make test` passes)
+- The project builds successfully (`make build` passes)
+- No linter errors or warnings exist
+- Test coverage meets minimum requirements
+
+**This is non-negotiable.** Do not mark tasks as complete until all checks pass.
+
 ### Code Review Requirements
 - All PRs must pass `go test ./...` with no failures
 - Test coverage must meet minimum requirements
@@ -68,6 +80,7 @@ Each phase must be complete and tested before moving to the next.
 - No TODO comments in production code
 - All exported identifiers must have godoc comments
 - Manual testing checklist must be completed
+- `make all` must pass without errors or warnings
 
 ### Documentation Standards
 - Package-level godoc for all packages

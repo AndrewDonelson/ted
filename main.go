@@ -7,20 +7,39 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/AndrewDonelson/ted/editor"
 )
 
 func main() {
-	// TODO: Phase 0 - Implement editor initialization and event loop
-	// For now, this is a placeholder that will be expanded in Phase 0 implementation
-
+	// Parse command-line arguments
+	var filePath string
 	if len(os.Args) > 1 {
-		fmt.Printf("ted: Opening file '%s' (not yet implemented)\n", os.Args[1])
-		fmt.Println("Phase 0 implementation in progress...")
-		os.Exit(0)
+		filePath = os.Args[1]
 	}
 
-	fmt.Println("ted - Terminal EDitor")
-	fmt.Println("Usage: ted [filename]")
-	fmt.Println("\nPhase 0 implementation in progress...")
-	os.Exit(0)
+	// Create editor
+	ed, err := editor.NewEditor()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing editor: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Open file if provided
+	if filePath != "" {
+		if err := ed.OpenFile(filePath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening file %q: %v\n", filePath, err)
+			// Continue anyway - allow editing new file
+		}
+	}
+
+	// Run editor
+	if err := ed.Run(); err != nil {
+		if err == editor.ErrQuit {
+			// Normal quit
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "Error running editor: %v\n", err)
+		os.Exit(1)
+	}
 }
