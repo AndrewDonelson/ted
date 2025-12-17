@@ -25,11 +25,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Open file if provided
+	// Set file path if provided (even if file doesn't exist yet - for new files)
 	if filePath != "" {
+		// Try to open file, but if it doesn't exist, set path anyway for new file
 		if err := ed.OpenFile(filePath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening file %q: %v\n", filePath, err)
-			// Continue anyway - allow editing new file
+			// File doesn't exist - set path for new file creation
+			ed.SetFilePath(filePath)
+			// Don't print error - this is normal for new files
 		}
 	}
 

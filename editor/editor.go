@@ -105,6 +105,14 @@ func (e *Editor) OpenFile(path string) error {
 	return nil
 }
 
+// SetFilePath sets the file path for a new file (file doesn't exist yet).
+func (e *Editor) SetFilePath(path string) {
+	e.filePath = path
+	e.fileInfo = nil                 // No file info for new files
+	e.lineEnding = file.LineEndingLF // Default to LF for new files
+	e.isDirty = false
+}
+
 // SaveFile saves the current buffer to the file.
 func (e *Editor) SaveFile() error {
 	if e.filePath == "" {
@@ -134,6 +142,11 @@ func (e *Editor) Run() error {
 	// Event loop
 	for {
 		ev := e.screen.PollEvent()
+
+		// Handle nil events (shouldn't happen, but be safe)
+		if ev == nil {
+			continue
+		}
 
 		// Handle resize events
 		if resizeEv, ok := ev.(*tcell.EventResize); ok {
@@ -176,9 +189,11 @@ func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
 	case terminal.KeyActionSave:
 		if e.filePath != "" {
 			if err := e.SaveFile(); err != nil {
+				// Return error so user knows save failed
 				return fmt.Errorf("save file: %w", err)
 			}
 		}
+		// If no file path, silently ignore (Save As not implemented in Phase 0)
 	case terminal.KeyActionCharacter:
 		if ke.IsPrintable() {
 			e.insertCharacter(ke.Character)
@@ -296,6 +311,10 @@ func (e *Editor) buildFileInfo() *renderer.FileInfo {
 	if e.fileInfo != nil {
 		info.Size = e.fileInfo.Size
 		info.Type = e.detectFileType()
+	} else if e.filePath != "" {
+		// For new files, still detect type from extension
+		info.Type = e.detectFileType()
+		info.Size = 0 // New file has no size yet
 	}
 
 	return info
