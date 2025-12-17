@@ -16,6 +16,11 @@
 coverage.*
 *.coverprofile
 profile.cov
+coverage.html
+
+# Build artifacts
+bin/
+dist/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

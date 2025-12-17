@@ -1,6 +1,6 @@
 # ted - Terminal EDitor
 
-[![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?style=flat-square&logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/AndrewDonelson/ted.svg)](https://pkg.go.dev/github.com/AndrewDonelson/ted)
 [![Go Report Card](https://goreportcard.com/badge/github.com/AndrewDonelson/ted?style=flat-square)](https://goreportcard.com/report/github.com/AndrewDonelson/ted)
