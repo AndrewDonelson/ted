@@ -110,4 +110,3 @@ func (s *TCellScreen) Fini() {
 func (s *TCellScreen) GetRawScreen() tcell.Screen {
 	return s.screen
 }
-

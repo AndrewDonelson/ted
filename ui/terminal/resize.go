@@ -47,4 +47,3 @@ func GetDimensions(ev tcell.Event) (Dimensions, bool) {
 	width, height := resizeEv.Size()
 	return Dimensions{Width: width, Height: height}, true
 }
-
