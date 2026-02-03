@@ -73,6 +73,11 @@ func (m *mockScreen) Fini() {
 	// No-op for mock
 }
 
+func (m *mockScreen) GetRawScreen() tcell.Screen {
+	// Return nil for mock - dialogs won't be tested here
+	return nil
+}
+
 func TestNewRenderer(t *testing.T) {
 	mockScr := newMockScreen(80, 24)
 	layout := layout.NewLayout(80, 24)

@@ -6,11 +6,13 @@ package editor
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/AndrewDonelson/ted/core/buffer"
 	"github.com/AndrewDonelson/ted/core/clipboard"
 	"github.com/AndrewDonelson/ted/core/file"
 	"github.com/AndrewDonelson/ted/core/history"
+	"github.com/AndrewDonelson/ted/ui/dialog"
 	"github.com/AndrewDonelson/ted/ui/layout"
 	"github.com/AndrewDonelson/ted/ui/menu"
 	"github.com/AndrewDonelson/ted/ui/renderer"
@@ -31,15 +33,17 @@ const (
 // Editor represents the main editor instance.
 type Editor struct {
 	// Core components
-	buffer  *buffer.Buffer
-	file    *FileState
-	history *history.History
+	buffer        *buffer.Buffer
+	file          *FileState
+	history       *history.History
+	searchManager *dialog.SearchManager
 
 	// UI components
-	layout   *layout.Layout
-	renderer *renderer.Renderer
-	menuBar  *menu.MenuBar
-	screen   terminal.Screen
+	layout        *layout.Layout
+	renderer      *renderer.Renderer
+	menuBar       *menu.MenuBar
+	screen        terminal.Screen
+	dialogManager *dialog.DialogManager
 
 	// State
 	mode       EditorMode
@@ -52,6 +56,9 @@ type Editor struct {
 	selectionStart buffer.Position // Start of selection (anchor point)
 	selectionEnd   buffer.Position // End of selection (cursor position)
 	hasSelection   bool            // Whether there is an active selection
+
+	// Search state
+	searchStatus string // Status message for search (e.g., "Match 3 of 12")
 }
 
 // FileState tracks file-related state.
@@ -87,14 +94,22 @@ func NewEditor() (*Editor, error) {
 	// Initialize history (undo/redo)
 	hist := history.NewHistory(100) // 100 operations deep
 
+	// Initialize dialog manager
+	dialogManager := dialog.NewDialogManager()
+
+	// Initialize search manager from dialog package
+	searchManager := dialog.NewSearchManager()
+
 	return &Editor{
 		buffer:         buf,
 		file:           &FileState{Encoding: "UTF-8"},
 		history:        hist,
+		searchManager:  searchManager,
 		layout:         layout,
 		renderer:       renderer,
 		menuBar:        menuBar,
 		screen:         screen,
+		dialogManager:  dialogManager,
 		mode:           ModeInsert,
 		isDirty:        false,
 		lineEnding:     file.LineEndingLF,
@@ -212,6 +227,18 @@ func (e *Editor) Run() error {
 			continue
 		}
 
+		// Check if dialog is open - handle dialog input first
+		if e.dialogManager.HasOpenDialog() {
+			if keyEv, ok := ev.(*tcell.EventKey); ok {
+				if handled := e.dialogManager.HandleInput(keyEv.Key(), keyEv.Modifiers(), keyEv.Rune()); handled {
+					if err := e.render(); err != nil {
+						return fmt.Errorf("render after dialog: %w", err)
+					}
+					continue
+				}
+			}
+		}
+
 		// Process keyboard events
 		keyEvent := terminal.ProcessEvent(ev)
 		if keyEvent == nil {
@@ -239,17 +266,40 @@ func (e *Editor) Run() error {
 
 // handleKeyEvent processes a key event and updates the editor state.
 func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
+	// If menu is open, handle menu navigation first
+	if e.menuBar.IsOpen() {
+		return e.handleMenuKeyEvent(ke)
+	}
+
 	switch ke.Action {
 	case terminal.KeyActionQuit:
 		return ErrQuit
 	case terminal.KeyActionSave:
-		if e.filePath != "" {
-			if err := e.SaveFile(); err != nil {
-				// Return error so user knows save failed
-				return fmt.Errorf("save file: %w", err)
-			}
+		return e.handleSave()
+	case terminal.KeyActionNew:
+		return e.handleNew()
+	case terminal.KeyActionOpen:
+		return e.handleOpen()
+	case terminal.KeyActionFind:
+		return e.handleFind()
+	case terminal.KeyActionReplace:
+		return e.handleReplace()
+	case terminal.KeyActionGoToLine:
+		return e.handleGoToLine()
+	case terminal.KeyActionToggleLineNumbers:
+		return e.handleToggleLineNumbers()
+	case terminal.KeyActionHelp:
+		return e.handleHelp()
+	case terminal.KeyActionMenuToggle:
+		e.menuBar.Toggle()
+	case terminal.KeyActionMenuAlt:
+		// Alt+key for menu activation
+		if e.menuBar.FindMenuByKey(ke.Character) {
+			// Menu opened, will be handled in next iteration
 		}
-		// If no file path, silently ignore (Save As not implemented in Phase 0)
+	case terminal.KeyActionEscape:
+		e.clearSelection()
+		e.menuBar.CloseMenu()
 	case terminal.KeyActionCharacter:
 		if ke.IsPrintable() {
 			e.clearSelection() // Clear selection when typing
@@ -283,6 +333,8 @@ func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
 		e.startSelectionIfNeeded()
 		e.buffer.MoveCursorDown()
 		e.updateSelectionEnd()
+	case terminal.KeyActionSelectAll:
+		e.handleSelectAll()
 	case terminal.KeyActionBackspace:
 		e.handleBackspace()
 	case terminal.KeyActionDelete:
@@ -315,9 +367,349 @@ func (e *Editor) handleKeyEvent(ke *terminal.KeyEvent) error {
 		if err := e.Paste(); err != nil {
 			return fmt.Errorf("paste: %w", err)
 		}
+	// Line operations
+	case terminal.KeyActionDeleteLine:
+		e.handleDeleteLine()
+	case terminal.KeyActionDuplicateLine:
+		e.handleDuplicateLine()
+	case terminal.KeyActionMoveLineUp:
+		e.handleMoveLineUp()
+	case terminal.KeyActionMoveLineDown:
+		e.handleMoveLineDown()
+	case terminal.KeyActionInsertLineAbove:
+		e.handleInsertLineAbove()
+	case terminal.KeyActionInsertLineBelow:
+		e.handleInsertLineBelow()
+	// Word navigation
+	case terminal.KeyActionWordLeft:
+		e.clearSelection()
+		e.buffer.MoveCursorWordLeft()
+	case terminal.KeyActionWordRight:
+		e.clearSelection()
+		e.buffer.MoveCursorWordRight()
+	// Page navigation
+	case terminal.KeyActionPageUp:
+		e.clearSelection()
+		e.buffer.MoveCursorPageUp(e.layout.GetEditAreaRegion().Height)
+	case terminal.KeyActionPageDown:
+		e.clearSelection()
+		e.buffer.MoveCursorPageDown(e.layout.GetEditAreaRegion().Height)
 	}
 
 	return nil
+}
+
+// handleMenuKeyEvent handles key events when a menu is open.
+func (e *Editor) handleMenuKeyEvent(ke *terminal.KeyEvent) error {
+	switch ke.Action {
+	case terminal.KeyActionEscape:
+		e.menuBar.CloseMenu()
+	case terminal.KeyActionMoveLeft:
+		e.menuBar.MoveLeft()
+	case terminal.KeyActionMoveRight:
+		e.menuBar.MoveRight()
+	case terminal.KeyActionMoveUp:
+		e.menuBar.MoveUp()
+	case terminal.KeyActionMoveDown:
+		e.menuBar.MoveDown()
+	case terminal.KeyActionEnter:
+		action := e.menuBar.SelectItem()
+		return e.executeMenuAction(action)
+	case terminal.KeyActionMenuAlt:
+		// Alt+key to switch menus
+		e.menuBar.FindMenuByKey(ke.Character)
+	}
+	return nil
+}
+
+// executeMenuAction executes the action associated with a menu item.
+func (e *Editor) executeMenuAction(action menu.MenuAction) error {
+	switch action {
+	case menu.ActionFileNew:
+		return e.handleNew()
+	case menu.ActionFileOpen:
+		return e.handleOpen()
+	case menu.ActionFileSave:
+		return e.handleSave()
+	case menu.ActionFileSaveAs:
+		return e.handleSaveAs()
+	case menu.ActionFileClose:
+		return e.handleClose()
+	case menu.ActionFileQuit:
+		return ErrQuit
+	case menu.ActionEditUndo:
+		return e.Undo()
+	case menu.ActionEditRedo:
+		return e.Redo()
+	case menu.ActionEditCut:
+		return e.Cut()
+	case menu.ActionEditCopy:
+		return e.Copy()
+	case menu.ActionEditPaste:
+		return e.Paste()
+	case menu.ActionEditSelectAll:
+		e.handleSelectAll()
+	case menu.ActionEditDeleteLine:
+		e.handleDeleteLine()
+	case menu.ActionEditDuplicateLine:
+		e.handleDuplicateLine()
+	case menu.ActionEditMoveLineUp:
+		e.handleMoveLineUp()
+	case menu.ActionEditMoveLineDown:
+		e.handleMoveLineDown()
+	case menu.ActionSearchFind:
+		return e.handleFind()
+	case menu.ActionSearchReplace:
+		return e.handleReplace()
+	case menu.ActionSearchGoToLine:
+		return e.handleGoToLine()
+	case menu.ActionViewLineNumbers:
+		return e.handleToggleLineNumbers()
+	case menu.ActionViewWordWrap:
+		return e.handleToggleWordWrap()
+	case menu.ActionHelpShortcuts:
+		return e.handleHelp()
+	case menu.ActionHelpAbout:
+		return e.handleAbout()
+	}
+	return nil
+}
+
+// Menu action handlers
+
+// handleNew creates a new empty buffer.
+func (e *Editor) handleNew() error {
+	e.buffer = buffer.NewBuffer()
+	e.filePath = ""
+	e.fileInfo = nil
+	e.isDirty = false
+	e.lineEnding = file.LineEndingLF
+	e.history.Clear()
+	e.clearSelection()
+	return nil
+}
+
+// handleOpen shows an open file prompt.
+func (e *Editor) handleOpen() error {
+	// Get current working directory as default
+	defaultPath := ""
+	if e.filePath != "" {
+		dir := filepath.Dir(e.filePath)
+		defaultPath = dir + "/"
+	}
+
+	// Create and show open file dialog
+	openDlg := dialog.NewOpenFileDialog(
+		defaultPath,
+		func(path string) {
+			if path != "" {
+				if err := e.OpenFile(path); err != nil {
+					// Silently handle error for now
+					_ = err
+				}
+			}
+		},
+		func() {
+			// Cancelled - do nothing
+		},
+	)
+
+	width, height := e.screen.GetSize()
+	e.dialogManager.Push(openDlg, width, height)
+	return nil
+}
+
+// handleSave saves the current file.
+func (e *Editor) handleSave() error {
+	if e.filePath != "" {
+		if err := e.SaveFile(); err != nil {
+			return fmt.Errorf("save file: %w", err)
+		}
+	}
+	// If no file path, would need Save As dialog
+	return nil
+}
+
+// handleSaveAs shows a save as prompt.
+func (e *Editor) handleSaveAs() error {
+	// Use current file path as default, or empty
+	defaultPath := e.filePath
+	if defaultPath == "" {
+		defaultPath = ""
+	}
+
+	// Create and show save as dialog
+	saveDlg := dialog.NewSaveAsDialog(
+		defaultPath,
+		func(path string) {
+			if path != "" {
+				e.filePath = path
+				if err := e.SaveFile(); err != nil {
+					// Silently handle error for now
+					_ = err
+				}
+			}
+		},
+		func() {
+			// Cancelled - do nothing
+		},
+	)
+
+	width, height := e.screen.GetSize()
+	e.dialogManager.Push(saveDlg, width, height)
+	return nil
+}
+
+// handleClose closes the current file.
+func (e *Editor) handleClose() error {
+	// Reset to empty buffer
+	return e.handleNew()
+}
+
+// handleFind shows the find dialog.
+func (e *Editor) handleFind() error {
+	finder := e.searchManager.GetFinder()
+
+	// Create and show find dialog
+	findDlg := dialog.NewFindDialog(
+		finder,
+		func() {
+			// Find Next callback
+			cursorPos := e.buffer.GetCursor()
+			_, found := e.searchManager.FindNext(e.buffer, cursorPos)
+			if found {
+				e.searchStatus = e.searchManager.BuildStatusMessage()
+			} else {
+				e.searchStatus = "No matches found"
+			}
+		},
+		func() {
+			// Cancelled - do nothing
+		},
+	)
+
+	width, height := e.screen.GetSize()
+	e.dialogManager.Push(findDlg, width, height)
+	return nil
+}
+
+// handleReplace shows the replace dialog.
+func (e *Editor) handleReplace() error {
+	finder := e.searchManager.GetFinder()
+	replacer := e.searchManager.GetReplacer()
+
+	// Create and show replace dialog
+	replaceDlg := dialog.NewReplaceDialog(
+		finder,
+		replacer,
+		func() {
+			// Replace callback - replace current match
+			_, err := replacer.ReplaceCurrent(e.buffer, e.history)
+			if err != nil {
+				e.searchStatus = "Replace failed"
+			} else {
+				e.isDirty = true
+				e.searchStatus = "Replaced"
+				// Move to next match
+				cursorPos := e.buffer.GetCursor()
+				e.searchManager.FindNext(e.buffer, cursorPos)
+			}
+		},
+		func() {
+			// Replace All callback
+			count, err := replacer.ReplaceAll(e.buffer, e.history)
+			if err != nil {
+				e.searchStatus = fmt.Sprintf("Replace all failed: %v", err)
+			} else {
+				e.isDirty = true
+				e.searchStatus = fmt.Sprintf("Replaced %d occurrences", count)
+			}
+		},
+		func() {
+			// Cancelled - do nothing
+		},
+	)
+
+	width, height := e.screen.GetSize()
+	e.dialogManager.Push(replaceDlg, width, height)
+	return nil
+}
+
+// handleGoToLine shows the go to line dialog.
+func (e *Editor) handleGoToLine() error {
+	maxLine := e.buffer.LineCount()
+	if maxLine < 1 {
+		maxLine = 1
+	}
+
+	// Create and show go to line dialog
+	gotoDlg := dialog.NewGoToLineDialog(
+		maxLine,
+		func(lineNum int) {
+			// Go to the specified line (convert from 1-indexed to 0-indexed)
+			targetLine := lineNum - 1
+			if targetLine < 0 {
+				targetLine = 0
+			}
+			if targetLine >= e.buffer.LineCount() {
+				targetLine = e.buffer.LineCount() - 1
+			}
+			e.buffer.MoveCursor(buffer.Position{Line: targetLine, Col: 0})
+		},
+		func() {
+			// Cancelled - do nothing
+		},
+	)
+
+	width, height := e.screen.GetSize()
+	e.dialogManager.Push(gotoDlg, width, height)
+	return nil
+}
+
+// handleToggleLineNumbers toggles line number display.
+func (e *Editor) handleToggleLineNumbers() error {
+	// TODO: Implement line number toggle in layout
+	return nil
+}
+
+// handleToggleWordWrap toggles word wrap.
+func (e *Editor) handleToggleWordWrap() error {
+	// TODO: Implement word wrap toggle
+	return nil
+}
+
+// handleHelp shows the help/keyboard shortcuts (placeholder for now).
+func (e *Editor) handleHelp() error {
+	// TODO: Implement help dialog
+	return nil
+}
+
+// handleAbout shows the about dialog (placeholder for now).
+func (e *Editor) handleAbout() error {
+	// TODO: Implement about dialog
+	return nil
+}
+
+// handleSelectAll selects all text in the buffer.
+func (e *Editor) handleSelectAll() {
+	e.hasSelection = true
+	e.selectionStart = buffer.Position{Line: 0, Col: 0}
+
+	// Get the last line
+	lastLine := e.buffer.LineCount() - 1
+	if lastLine < 0 {
+		lastLine = 0
+	}
+
+	// Get the length of the last line
+	lastLineText, err := e.buffer.GetLine(lastLine)
+	lastCol := 0
+	if err == nil {
+		lastCol = len(lastLineText)
+	}
+
+	e.selectionEnd = buffer.Position{Line: lastLine, Col: lastCol}
+	e.buffer.MoveCursor(e.selectionEnd)
 }
 
 // insertCharacter inserts a character at the current cursor position.
@@ -336,6 +728,9 @@ func (e *Editor) insertCharacter(r rune) {
 		// Ignore insertion errors for now
 		return
 	}
+
+	// Mark as modified
+	e.isDirty = true
 
 	// Push to history
 	e.history.Push(op)
@@ -382,6 +777,9 @@ func (e *Editor) handleBackspace() {
 	if err := e.buffer.Delete(start, end); err != nil {
 		return
 	}
+
+	// Mark as modified
+	e.isDirty = true
 
 	// Update cursor position
 	if pos.Col > 0 {
@@ -435,6 +833,9 @@ func (e *Editor) handleDelete() {
 	if err := e.buffer.Delete(start, end); err != nil {
 		return
 	}
+
+	// Mark as modified
+	e.isDirty = true
 
 	// Push to history
 	e.history.Push(op)
@@ -616,8 +1017,19 @@ func (e *Editor) render() error {
 	// Build file info for info bar
 	fileInfo := e.buildFileInfo()
 
-	// Render everything
-	return e.renderer.RenderAll(e.buffer, cursorPos, fileInfo)
+	// Render everything with interactive menu bar
+	if err := e.renderer.RenderAllWithMenu(e.buffer, cursorPos, fileInfo, e.menuBar); err != nil {
+		return err
+	}
+
+	// Render dialogs on top of everything else
+	if e.dialogManager.HasOpenDialog() {
+		// Get the active style from renderer
+		style := tcell.StyleDefault
+		e.dialogManager.Render(e.screen, style)
+	}
+
+	return nil
 }
 
 // buildFileInfo builds the file info for the info bar.
@@ -703,3 +1115,142 @@ func (e *Editor) detectFileType() string {
 
 // ErrQuit is returned when the user quits the editor.
 var ErrQuit = fmt.Errorf("quit")
+
+// handleDeleteLine deletes the current line.
+func (e *Editor) handleDeleteLine() {
+	e.clearSelection()
+	deletedText, _ := e.buffer.DeleteLine()
+	if deletedText != "" {
+		// Record for undo
+		pos := e.buffer.GetCursor()
+		op := &history.DeleteOperation{
+			StartPos: buffer.Position{Line: pos.Line, Col: 0},
+			EndPos:   buffer.Position{Line: pos.Line, Col: len(deletedText)},
+			Deleted:  deletedText,
+		}
+		e.history.Push(op)
+	}
+}
+
+// handleDuplicateLine duplicates the current line.
+func (e *Editor) handleDuplicateLine() {
+	e.clearSelection()
+	originalPos := e.buffer.GetCursor()
+	originalLine, _ := e.buffer.GetLine(originalPos.Line)
+
+	if err := e.buffer.DuplicateLine(); err == nil {
+		// Record for undo
+		dupPos := e.buffer.GetCursor()
+		op := &history.InsertOperation{
+			Pos:  buffer.Position{Line: dupPos.Line, Col: 0},
+			Text: originalLine + "\n",
+		}
+		e.history.Push(op)
+	}
+}
+
+// handleMoveLineUp moves the current line up.
+func (e *Editor) handleMoveLineUp() {
+	e.clearSelection()
+	pos := e.buffer.GetCursor()
+	if pos.Line > 0 {
+		// Get lines being swapped
+		line1, _ := e.buffer.GetLine(pos.Line)
+		line2, _ := e.buffer.GetLine(pos.Line - 1)
+
+		e.buffer.MoveLineUp()
+
+		// Record for undo (as a complex operation)
+		op := &history.CompositeOperation{
+			Operations: []history.Operation{
+				&history.DeleteOperation{
+					StartPos: buffer.Position{Line: pos.Line - 1, Col: 0},
+					EndPos:   buffer.Position{Line: pos.Line, Col: 0},
+					Deleted:  line2 + "\n",
+				},
+				&history.DeleteOperation{
+					StartPos: buffer.Position{Line: pos.Line, Col: 0},
+					EndPos:   buffer.Position{Line: pos.Line + 1, Col: 0},
+					Deleted:  line1 + "\n",
+				},
+				&history.InsertOperation{
+					Pos:  buffer.Position{Line: pos.Line - 1, Col: 0},
+					Text: line1 + "\n",
+				},
+				&history.InsertOperation{
+					Pos:  buffer.Position{Line: pos.Line, Col: 0},
+					Text: line2 + "\n",
+				},
+			},
+		}
+		e.history.Push(op)
+	}
+}
+
+// handleMoveLineDown moves the current line down.
+func (e *Editor) handleMoveLineDown() {
+	e.clearSelection()
+	pos := e.buffer.GetCursor()
+	if pos.Line < e.buffer.LineCount()-1 {
+		// Get lines being swapped
+		line1, _ := e.buffer.GetLine(pos.Line)
+		line2, _ := e.buffer.GetLine(pos.Line + 1)
+
+		e.buffer.MoveLineDown()
+
+		// Record for undo
+		op := &history.CompositeOperation{
+			Operations: []history.Operation{
+				&history.DeleteOperation{
+					StartPos: buffer.Position{Line: pos.Line, Col: 0},
+					EndPos:   buffer.Position{Line: pos.Line + 1, Col: 0},
+					Deleted:  line1 + "\n",
+				},
+				&history.DeleteOperation{
+					StartPos: buffer.Position{Line: pos.Line + 1, Col: 0},
+					EndPos:   buffer.Position{Line: pos.Line + 2, Col: 0},
+					Deleted:  line2 + "\n",
+				},
+				&history.InsertOperation{
+					Pos:  buffer.Position{Line: pos.Line, Col: 0},
+					Text: line2 + "\n",
+				},
+				&history.InsertOperation{
+					Pos:  buffer.Position{Line: pos.Line + 1, Col: 0},
+					Text: line1 + "\n",
+				},
+			},
+		}
+		e.history.Push(op)
+	}
+}
+
+// handleInsertLineAbove inserts a new line above the current line.
+func (e *Editor) handleInsertLineAbove() {
+	e.clearSelection()
+	originalPos := e.buffer.GetCursor()
+
+	if err := e.buffer.InsertLineAbove(); err == nil {
+		// Record for undo
+		op := &history.InsertOperation{
+			Pos:  buffer.Position{Line: originalPos.Line, Col: 0},
+			Text: "\n",
+		}
+		e.history.Push(op)
+	}
+}
+
+// handleInsertLineBelow inserts a new line below the current line.
+func (e *Editor) handleInsertLineBelow() {
+	e.clearSelection()
+	originalPos := e.buffer.GetCursor()
+
+	if err := e.buffer.InsertLineBelow(); err == nil {
+		// Record for undo
+		op := &history.InsertOperation{
+			Pos:  buffer.Position{Line: originalPos.Line + 1, Col: 0},
+			Text: "\n",
+		}
+		e.history.Push(op)
+	}
+}

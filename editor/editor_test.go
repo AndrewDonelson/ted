@@ -437,7 +437,8 @@ func TestEditor_BuildFileInfo(t *testing.T) {
 
 	ed.buffer.SetLines([]string{"line1", "line2"})
 	ed.filePath = "test.txt"
-	ed.isDirty = true
+	// Modify the buffer to set the modified flag
+	ed.buffer.Insert(buffer.Position{Line: 0, Col: 0}, "x")
 
 	fileInfo := ed.buildFileInfo()
 

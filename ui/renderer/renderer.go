@@ -7,6 +7,7 @@ package renderer
 import (
 	"github.com/AndrewDonelson/ted/core/buffer"
 	"github.com/AndrewDonelson/ted/ui/layout"
+	"github.com/AndrewDonelson/ted/ui/menu"
 	"github.com/AndrewDonelson/ted/ui/terminal"
 	"github.com/gdamore/tcell/v2"
 )
@@ -64,6 +65,49 @@ func (r *Renderer) RenderAll(buf *buffer.Buffer, cursorPos buffer.Position, file
 	screenX, screenY := r.layout.BufferToScreen(cursorPos.Line, cursorPos.Col, viewport)
 	if screenX >= 0 && screenY >= 0 {
 		r.screen.ShowCursor(screenX, screenY)
+	}
+
+	return r.Refresh()
+}
+
+// RenderAllWithMenu renders all UI components with an interactive menu bar.
+func (r *Renderer) RenderAllWithMenu(buf *buffer.Buffer, cursorPos buffer.Position, fileInfo *FileInfo, menuBar *menu.MenuBar) error {
+	r.Clear()
+
+	// Fill entire screen with background color first
+	if err := r.fillScreen(); err != nil {
+		return err
+	}
+
+	// Render menu bar (labels only, not dropdown)
+	if err := r.RenderInteractiveMenuBar(menuBar); err != nil {
+		return err
+	}
+
+	// Render text area
+	if err := r.RenderTextArea(buf, cursorPos); err != nil {
+		return err
+	}
+
+	// Render info bar (CRITICAL: inverted colors)
+	if err := r.RenderInfoBar(fileInfo); err != nil {
+		return err
+	}
+
+	// Render dropdown menu AFTER everything else so it's on top
+	if err := r.RenderDropdownMenu(menuBar); err != nil {
+		return err
+	}
+
+	// Show cursor only if menu is not open
+	if !menuBar.IsOpen() {
+		viewport := r.layout.CalculateViewport(cursorPos.Line, buf.LineCount())
+		screenX, screenY := r.layout.BufferToScreen(cursorPos.Line, cursorPos.Col, viewport)
+		if screenX >= 0 && screenY >= 0 {
+			r.screen.ShowCursor(screenX, screenY)
+		}
+	} else {
+		r.screen.HideCursor()
 	}
 
 	return r.Refresh()

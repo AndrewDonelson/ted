@@ -2,6 +2,8 @@
 package terminal
 
 import (
+	"unicode"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -53,6 +55,51 @@ const (
 	KeyActionSelectUp
 	// KeyActionSelectDown represents Shift+Down (extend selection down).
 	KeyActionSelectDown
+	// KeyActionSelectAll represents Ctrl+A (select all).
+	KeyActionSelectAll
+	// KeyActionNew represents Ctrl+N (new file).
+	KeyActionNew
+	// KeyActionOpen represents Ctrl+O (open file).
+	KeyActionOpen
+	// KeyActionFind represents Ctrl+F (find).
+	KeyActionFind
+	// KeyActionReplace represents Ctrl+H (replace).
+	KeyActionReplace
+	// KeyActionGoToLine represents Ctrl+G (go to line).
+	KeyActionGoToLine
+	// KeyActionToggleLineNumbers represents Ctrl+L (toggle line numbers).
+	KeyActionToggleLineNumbers
+	// KeyActionHelp represents F1 (help).
+	KeyActionHelp
+	// KeyActionMenuToggle represents F10 (toggle menu).
+	KeyActionMenuToggle
+	// KeyActionMenuAlt represents Alt+key for menu shortcuts.
+	KeyActionMenuAlt
+	// KeyActionEscape represents Escape key.
+	KeyActionEscape
+	// Line Operations
+	// KeyActionDeleteLine represents Ctrl+Shift+K (delete line).
+	KeyActionDeleteLine
+	// KeyActionDuplicateLine represents Ctrl+D (duplicate line).
+	KeyActionDuplicateLine
+	// KeyActionMoveLineUp represents Alt+Up (move line up).
+	KeyActionMoveLineUp
+	// KeyActionMoveLineDown represents Alt+Down (move line down).
+	KeyActionMoveLineDown
+	// KeyActionInsertLineAbove represents Ctrl+Shift+Enter (insert line above).
+	KeyActionInsertLineAbove
+	// KeyActionInsertLineBelow represents Ctrl+Enter (insert line below).
+	KeyActionInsertLineBelow
+	// Word Navigation
+	// KeyActionWordLeft represents Ctrl+Left (move to previous word).
+	KeyActionWordLeft
+	// KeyActionWordRight represents Ctrl+Right (move to next word).
+	KeyActionWordRight
+	// Page Navigation
+	// KeyActionPageUp represents Page Up key.
+	KeyActionPageUp
+	// KeyActionPageDown represents Page Down key.
+	KeyActionPageDown
 )
 
 // KeyEvent represents a processed keyboard event.
@@ -80,8 +127,14 @@ func processKeyEvent(ev *tcell.EventKey) *KeyEvent {
 	modifiers := ev.Modifiers()
 	r := ev.Rune()
 
-	// Handle special keys
+	// Handle special keys first
 	switch key {
+	case tcell.KeyEscape:
+		return &KeyEvent{Action: KeyActionEscape, Key: key, Modifiers: modifiers}
+	case tcell.KeyF1:
+		return &KeyEvent{Action: KeyActionHelp, Key: key, Modifiers: modifiers}
+	case tcell.KeyF10:
+		return &KeyEvent{Action: KeyActionMenuToggle, Key: key, Modifiers: modifiers}
 	case tcell.KeyCtrlS:
 		return &KeyEvent{Action: KeyActionSave, Key: key, Modifiers: modifiers}
 	case tcell.KeyCtrlQ:
@@ -96,13 +149,51 @@ func processKeyEvent(ev *tcell.EventKey) *KeyEvent {
 		return &KeyEvent{Action: KeyActionCopy, Key: key, Modifiers: modifiers}
 	case tcell.KeyCtrlV:
 		return &KeyEvent{Action: KeyActionPaste, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlA:
+		return &KeyEvent{Action: KeyActionSelectAll, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlN:
+		return &KeyEvent{Action: KeyActionNew, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlO:
+		return &KeyEvent{Action: KeyActionOpen, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlF:
+		return &KeyEvent{Action: KeyActionFind, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlH:
+		return &KeyEvent{Action: KeyActionReplace, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlG:
+		return &KeyEvent{Action: KeyActionGoToLine, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlL:
+		return &KeyEvent{Action: KeyActionToggleLineNumbers, Key: key, Modifiers: modifiers}
 	case tcell.KeyLeft:
+		if modifiers&tcell.ModCtrl != 0 {
+			return &KeyEvent{Action: KeyActionWordLeft, Key: key, Modifiers: modifiers}
+		}
+		if modifiers&tcell.ModShift != 0 {
+			return &KeyEvent{Action: KeyActionSelectLeft, Key: key, Modifiers: modifiers}
+		}
 		return &KeyEvent{Action: KeyActionMoveLeft, Key: key, Modifiers: modifiers}
 	case tcell.KeyRight:
+		if modifiers&tcell.ModCtrl != 0 {
+			return &KeyEvent{Action: KeyActionWordRight, Key: key, Modifiers: modifiers}
+		}
+		if modifiers&tcell.ModShift != 0 {
+			return &KeyEvent{Action: KeyActionSelectRight, Key: key, Modifiers: modifiers}
+		}
 		return &KeyEvent{Action: KeyActionMoveRight, Key: key, Modifiers: modifiers}
 	case tcell.KeyUp:
+		if modifiers&tcell.ModAlt != 0 {
+			return &KeyEvent{Action: KeyActionMoveLineUp, Key: key, Modifiers: modifiers}
+		}
+		if modifiers&tcell.ModShift != 0 {
+			return &KeyEvent{Action: KeyActionSelectUp, Key: key, Modifiers: modifiers}
+		}
 		return &KeyEvent{Action: KeyActionMoveUp, Key: key, Modifiers: modifiers}
 	case tcell.KeyDown:
+		if modifiers&tcell.ModAlt != 0 {
+			return &KeyEvent{Action: KeyActionMoveLineDown, Key: key, Modifiers: modifiers}
+		}
+		if modifiers&tcell.ModShift != 0 {
+			return &KeyEvent{Action: KeyActionSelectDown, Key: key, Modifiers: modifiers}
+		}
 		return &KeyEvent{Action: KeyActionMoveDown, Key: key, Modifiers: modifiers}
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		return &KeyEvent{Action: KeyActionBackspace, Key: key, Modifiers: modifiers}
@@ -114,12 +205,33 @@ func processKeyEvent(ev *tcell.EventKey) *KeyEvent {
 		return &KeyEvent{Action: KeyActionHome, Key: key, Modifiers: modifiers}
 	case tcell.KeyEnd:
 		return &KeyEvent{Action: KeyActionEnd, Key: key, Modifiers: modifiers}
-	case tcell.KeyRune:
-		// Regular character input
-		// Ignore Alt+key combinations (they're used for menus in Phase 1+)
-		if modifiers&tcell.ModAlt != 0 {
-			return &KeyEvent{Action: KeyActionNone, Key: key, Modifiers: modifiers}
+	case tcell.KeyPgUp:
+		return &KeyEvent{Action: KeyActionPageUp, Key: key, Modifiers: modifiers}
+	case tcell.KeyPgDn:
+		return &KeyEvent{Action: KeyActionPageDown, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlK:
+		// Ctrl+Shift+K for delete line
+		if modifiers&tcell.ModShift != 0 {
+			return &KeyEvent{Action: KeyActionDeleteLine, Key: key, Modifiers: modifiers}
 		}
+		return &KeyEvent{Action: KeyActionNone, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlD:
+		return &KeyEvent{Action: KeyActionDuplicateLine, Key: key, Modifiers: modifiers}
+	case tcell.KeyCtrlJ:
+		// Ctrl+J for insert line below, Ctrl+Shift+J for insert line above
+		// Note: We'll also handle Ctrl+Enter in the main loop since tcell
+		// may treat it differently
+		if modifiers&tcell.ModShift != 0 {
+			return &KeyEvent{Action: KeyActionInsertLineAbove, Key: key, Modifiers: modifiers}
+		}
+		return &KeyEvent{Action: KeyActionInsertLineBelow, Key: key, Modifiers: modifiers}
+	case tcell.KeyRune:
+		// Check for Alt+key combinations (for menu shortcuts)
+		if modifiers&tcell.ModAlt != 0 && r != 0 {
+			upperR := unicode.ToUpper(r)
+			return &KeyEvent{Action: KeyActionMenuAlt, Character: upperR, Key: key, Modifiers: modifiers}
+		}
+		// Regular character input
 		if r != 0 {
 			return &KeyEvent{Action: KeyActionCharacter, Character: r, Key: key, Modifiers: modifiers}
 		}

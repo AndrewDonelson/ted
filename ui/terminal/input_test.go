@@ -113,9 +113,9 @@ func TestProcessEvent(t *testing.T) {
 			wantNil:    true,
 		},
 		{
-			name:       "unknown key",
+			name:       "F1 key (help)",
 			ev:         tcell.NewEventKey(tcell.KeyF1, 0, tcell.ModNone),
-			wantAction: KeyActionNone,
+			wantAction: KeyActionHelp,
 			wantChar:   0,
 			wantNil:    false,
 		},

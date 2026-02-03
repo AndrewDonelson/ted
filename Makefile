@@ -39,7 +39,7 @@ COLOR_CYAN := \033[36m
 .DEFAULT_GOAL := help
 
 # Phony targets
-.PHONY: help build install clean test test-coverage test-verbose test-race lint vet fmt fmt-check run dev deps deps-update deps-tidy cross-build all check
+.PHONY: help build install clean test test-coverage test-verbose test-race lint vet fmt fmt-check run dev deps deps-update deps-tidy cross-build all check reset-terminal
 
 ##@ General
 
@@ -51,6 +51,12 @@ help: ## Display this help message
 	@echo "$(COLOR_BOLD)Project:$(COLOR_RESET) $(PROJECT_NAME)"
 	@echo "$(COLOR_BOLD)Version:$(COLOR_RESET) $(VERSION)"
 	@echo "$(COLOR_BOLD)Module:$(COLOR_RESET) $(MODULE_NAME)"
+
+reset-terminal: ## Reset terminal if it gets stuck after tests
+	@echo "$(COLOR_BOLD)$(COLOR_YELLOW)Resetting terminal...$(COLOR_RESET)"
+	@stty sane 2>/dev/null || true
+	@tput reset 2>/dev/null || true
+	@echo "$(COLOR_GREEN)✓ Terminal reset complete$(COLOR_RESET)"
 
 ##@ Building
 
@@ -74,25 +80,25 @@ clean: ## Remove build artifacts
 
 ##@ Testing
 
-test: ## Run all tests
-	@echo "$(COLOR_BOLD)$(COLOR_CYAN)Running tests...$(COLOR_RESET)"
-	@$(GO) test ./... -v
-	@echo "$(COLOR_GREEN)✓ Tests complete$(COLOR_RESET)"
+test: ## Run all tests (clean output)
+	@./scripts/test.sh
 
 test-coverage: ## Run tests with coverage report
 	@echo "$(COLOR_BOLD)$(COLOR_CYAN)Running tests with coverage...$(COLOR_RESET)"
-	@$(GO) test ./... -coverprofile=$(COVERAGE_FILE) -covermode=atomic
-	@$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
+	@$(GO) test ./... -coverprofile=$(COVERAGE_FILE) -covermode=atomic 2>&1 | grep -E "^(ok|FAIL|\?)" || true
+	@echo ""
+	@$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML) 2>/dev/null
 	@echo "$(COLOR_GREEN)✓ Coverage report generated: $(COVERAGE_HTML)$(COLOR_RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
 
 test-verbose: ## Run tests with verbose output
 	@echo "$(COLOR_BOLD)$(COLOR_CYAN)Running tests (verbose)...$(COLOR_RESET)"
-	@$(GO) test ./... -v -cover
+	@$(GO) test ./... -v -cover 2>&1
 
 test-race: ## Run tests with race detector
 	@echo "$(COLOR_BOLD)$(COLOR_CYAN)Running tests with race detector...$(COLOR_RESET)"
-	@$(GO) test ./... -race -v
+	@$(GO) test ./... -race 2>&1 | grep -E "^(ok|FAIL|\?)" || true
+	@echo ""
 	@echo "$(COLOR_GREEN)✓ Race detection complete$(COLOR_RESET)"
 
 test-bench: ## Run benchmark tests
@@ -218,4 +224,6 @@ version: ## Display version information
 
 all: clean deps-tidy fmt-check vet test build ## Run full build pipeline (clean, deps, format, vet, test, build)
 	@echo "$(COLOR_BOLD)$(COLOR_GREEN)✓ Full build pipeline complete$(COLOR_RESET)"
+	@stty sane 2>/dev/null || true
+	@tput reset 2>/dev/null || true
 

@@ -35,6 +35,10 @@ type Screen interface {
 
 	// Fini finalizes the screen and restores the terminal state.
 	Fini()
+
+	// GetRawScreen returns the underlying tcell.Screen for advanced operations.
+	// This should be used sparingly and only when necessary.
+	GetRawScreen() tcell.Screen
 }
 
 // TCellScreen wraps tcell.Screen to implement our Screen interface.

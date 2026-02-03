@@ -90,6 +90,46 @@ func (op *SetLinesOperation) Description() string {
 	return "set lines"
 }
 
+// CompositeOperation represents a composite of multiple operations that can be undone/redone as a unit.
+type CompositeOperation struct {
+	Operations  []Operation
+	description string
+}
+
+// Undo undoes all operations in reverse order.
+func (op *CompositeOperation) Undo(buf *buffer.Buffer) error {
+	// Undo in reverse order
+	for i := len(op.Operations) - 1; i >= 0; i-- {
+		if err := op.Operations[i].Undo(buf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Redo redoes all operations in forward order.
+func (op *CompositeOperation) Redo(buf *buffer.Buffer) error {
+	for i := 0; i < len(op.Operations); i++ {
+		if err := op.Operations[i].Redo(buf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Description returns a description of the composite operation.
+func (op *CompositeOperation) Description() string {
+	if op.description != "" {
+		return op.description
+	}
+	return "composite operation"
+}
+
+// SetDescription sets the description for this composite operation.
+func (op *CompositeOperation) SetDescription(desc string) {
+	op.description = desc
+}
+
 // splitLines splits text by newlines, similar to strings.Split but preserves empty lines.
 func splitLines(text string) []string {
 	if text == "" {
